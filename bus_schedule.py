@@ -3,6 +3,7 @@ from datetime import datetime
 import random
 import numpy as np
 import pprint
+from itertools import groupby
 
 
 @dataclass(frozen=True)
@@ -11,21 +12,10 @@ class BusDriver:
     name: str = ""
 
 
-# @dataclass(frozen=True)
-# class Bus:
-#     id: str
-
-
 @dataclass(frozen=True)
 class TimeSlot:
     id: str
     time: str
-
-
-# @dataclass(frozen=True)
-# class Route:
-#     id: str
-#     display_name: str
 
 
 @dataclass
@@ -38,37 +28,14 @@ class Schedule:
         self.date = datetime.now()
 
     def create_data(self):
-        TOTAL_DRIVERS = 5
-
-        BUSES = ["BLB7124", "BJE4494"]
+        TOTAL_DRIVERS = 10
         DRIVERS = [f"D{i:02}" for i in range(1, TOTAL_DRIVERS + 1)]
-        ROUTES = [
-            ("R01", "A"),
-            ("R02", "B"),
-            ("R03", "C"),
-            ("R04", "C2"),
-            ("R05", "D"),
-            ("R06", "E"),
-            ("R07", "G"),
-        ]
+
         TIMES = [
-            ("T00", "07:00"),
-            ("T01", "08:00"),
-            ("T02", "09:00"),
-            ("T03", "10:00"),
-            ("T04", "11:00"),
-            # ("T05", "12:00"),
-            # ("T06", "13:00"),
-            # ("T07", "14:00"),
-            # ("T08", "15:00"),
-            # ("T09", "16:00"),
-            # ("T10", "17:00"),
-            # ("T11", "18:00"),
-            # ("T11", "19:00"),
+            ("T" + "{:02d}".format(i), "{:02d}:{:02d}".format(i // 2 + 7, (i % 2) * 30))
+            for i in range(31)
         ]
 
-        # self.buses = [Bus(i) for i in BUSES]
-        # self.routes = [Route(id, name) for id, name in ROUTES]
         self.drivers = [BusDriver(i) for i in DRIVERS]
         self.timeslots = [TimeSlot(id, time) for id, time in TIMES]
 
@@ -85,29 +52,102 @@ class Schedule:
             {driver: np.ones(((len(self.timeslots),))) for driver in self.drivers}
         )
 
-    def generate_random_schedule(self, size=5):
-        self.slots.update(
-            {driver: np.random.randint(0, 2, size) for driver in self.drivers}
+    def generate_random_schedule(self):
+        new_schedule = {}
+
+        for driver in self.drivers:
+            new_times = self._generate_raw_times()
+            while not (self._is_valid_times(new_times)):
+                new_times = self._generate_raw_times()
+
+            new_schedule[driver] = new_times
+
+        self.slots.update(new_schedule)
+
+    def _generate_raw_times(self):
+        new_times = np.ones(len(self.timeslots))
+        random_indices = np.random.choice(
+            np.arange(0, len(self.timeslots) - 1, 2), 3, replace=False
+        )
+        random_indices = np.concatenate((random_indices, random_indices + 1), axis=0)
+        new_times[random_indices] = 0
+
+        return new_times
+
+    def _is_valid_times(self, arr, overtime_idx=23):
+
+        mand_work_count = np.sum(arr[:overtime_idx] == 1)
+        over_work_count = np.sum(arr[overtime_idx:] == 1)
+        break_count = np.sum(arr == 0)
+
+        consecutive_count = [
+            len(list(group)) for key, group in groupby(arr) if key == 1
+        ]
+
+        max_consecutive_work = max(consecutive_count)
+        min_consecutive_work = min(consecutive_count)
+
+        max_consecutive_break = min(
+            [len(list(group)) for key, group in groupby(arr) if key == 0]
         )
 
-    def calc_fitness(self):
-        fitness_score = 0
+        # Hard Constraint 1: The mandatory working period for every driver is 8 hours per day.
+        total_mand = 19
+        if mand_work_count > total_mand:
+            return False
 
-        for driver, times in self.slots.items():
-            no_reset = (times == 1).cumsum()
-            excess = np.maximum.accumulate((no_reset) * (times == 0))
-            result = no_reset - excess
+        # Hard Constraint 2: Overtime period for every driver is 2 hours 30mins per day.
+        total_overtime = 6
+        if over_work_count > total_overtime:
+            return False
 
-            fitness_score += result
+        # Hard Constraint 3: Every work should be at least 1hr and does not exceed 4hr
+        if (max_consecutive_work > 10) or (min_consecutive_work < 2):
+            return False
 
-            highest_consecutive_work = result.max()
-            if highest_consecutive_work > 3:
-                fitness_score = 0
+        # Hard Constraint 4: No breaks at first hour
+        if (arr[0] == 0) or (arr[1] == 0):
+            return False
 
-            prefered_break = []
-            for i in prefered_break:
-                if times[i] == 1:
-                    fitness_score += 0.5
+        if (break_count) != 6 or (max_consecutive_break != 2):
+            return False
+
+        return True
+
+    def calc_fitness(self, ideal_break=5, ideal_overtime_break=2, overtime_idx=7):
+        slots_matrix = np.stack(list(self.slots.values()), axis=0)
+
+        break_count_col = np.sum((slots_matrix == 0), axis=0)
+        difference = np.abs(break_count_col - ideal_break)
+
+        ignore_idx = [0, 1]
+
+        penalty_score = np.zeros(
+            len(difference),
+        )
+
+        for i, val in enumerate(difference):
+            if i in ignore_idx:
+                continue
+
+            if val >= 3:
+                penalty = 30
+            elif 1 <= val <= 2:
+                penalty = val * 10
+            else:
+                penalty = 0
+
+            penalty_score[i] = penalty
+
+        fitness1 = np.sum(penalty_score)
+
+        overtime_break_count_row = np.sum((slots_matrix[:, overtime_idx:] == 0), axis=1)
+        difference = np.abs(overtime_break_count_row - ideal_overtime_break)
+        difference = [10 if val >= 1 else 0 for val in difference]
+
+        fitness2 = np.sum(difference)
+
+        fitness_score = fitness1 + fitness2
 
         return fitness_score
 
@@ -160,6 +200,8 @@ if __name__ == "__main__":
     print("Before mutation:\n")
     s1.print_data()
 
-    print("After mutation:\n")
-    s1.random_mutate(0.5)
-    s1.print_data()
+    print(s1.calc_fitness(5))
+
+    # print("After mutation:\n")
+    # s1.random_mutate(0.5)
+    # s1.print_data()
