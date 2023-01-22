@@ -28,7 +28,7 @@ class Schedule:
         self.date = datetime.now()
 
     def create_data(self):
-        TOTAL_DRIVERS = 10
+        TOTAL_DRIVERS = 23
         DRIVERS = [f"D{i:02}" for i in range(1, TOTAL_DRIVERS + 1)]
 
         TIMES = [
@@ -67,9 +67,9 @@ class Schedule:
     def _generate_raw_times(self):
         new_times = np.ones(len(self.timeslots))
         random_indices = np.random.choice(
-            np.arange(0, len(self.timeslots) - 1, 2), 3, replace=False
+            np.arange(0, len(self.timeslots) - 1, 2), 6, replace=False
         )
-        random_indices = np.concatenate((random_indices, random_indices + 1), axis=0)
+        # random_indices = np.concatenate((random_indices, random_indices + 1), axis=0)
         new_times[random_indices] = 0
 
         return new_times
@@ -109,14 +109,15 @@ class Schedule:
         if (arr[0] == 0) or (arr[1] == 0):
             return False
 
-        if (break_count) != 6 or (max_consecutive_break != 2):
+        if (break_count) != 6 or (max_consecutive_break > 2):
             return False
 
         return True
 
-    def calc_fitness(self, ideal_break=5, ideal_overtime_break=2, overtime_idx=7):
+    def calc_fitness(self, ideal_break=8, ideal_overtime_break=2, overtime_idx=24):
         slots_matrix = np.stack(list(self.slots.values()), axis=0)
 
+        # Soft Constraint 1: Number of drivers that goes on breaks together are preferabably the ideal value
         break_count_col = np.sum((slots_matrix == 0), axis=0)
         difference = np.abs(break_count_col - ideal_break)
 
@@ -141,6 +142,7 @@ class Schedule:
 
         fitness1 = np.sum(penalty_score)
 
+        # Soft Constraint 2: One hour break during overtime and 2 hour  is preferable
         overtime_break_count_row = np.sum((slots_matrix[:, overtime_idx:] == 0), axis=1)
         difference = np.abs(overtime_break_count_row - ideal_overtime_break)
         difference = [10 if val >= 1 else 0 for val in difference]
@@ -200,7 +202,7 @@ if __name__ == "__main__":
     print("Before mutation:\n")
     s1.print_data()
 
-    print(s1.calc_fitness(5))
+    print(s1.calc_fitness())
 
     # print("After mutation:\n")
     # s1.random_mutate(0.5)
