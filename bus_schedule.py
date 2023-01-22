@@ -22,6 +22,8 @@ class TimeSlot:
 class Schedule:
     def __init__(self):
         self.slots: dict[BusDriver, np.ndarray] = {}
+        self.slots_matrix: np.ndarray
+
         self.create_data()
 
     def get_current_date(self):
@@ -40,12 +42,15 @@ class Schedule:
         self.timeslots = [TimeSlot(id, time) for id, time in TIMES]
 
     def print_data(self):
-        # print(self.buses)
-        # print(self.routes)
-        # print(self.drivers)
-        # print(self.timeslots)
-
+        self.data_from_matrix()
         pprint.pprint(self.slots)
+        print(f"\nFitness: {self.calc_fitness()}\n")
+
+    def data_from_matrix(self):
+        new_dict = {
+            driver: time for driver, time in zip(self.drivers, self.slots_matrix)
+        }
+        self.slots.update(new_dict)
 
     def generate_empty_schedule(self):
         self.slots.update(
@@ -63,9 +68,10 @@ class Schedule:
             new_schedule[driver] = new_times
 
         self.slots.update(new_schedule)
+        self.slots_matrix = np.stack(list(self.slots.values()), axis=0)
 
     def _generate_raw_times(self):
-        new_times = np.ones(len(self.timeslots))
+        new_times = np.ones(len(self.timeslots), dtype=int)
         random_indices = np.random.choice(
             np.arange(0, len(self.timeslots) - 1, 2), 6, replace=False
         )
@@ -115,10 +121,13 @@ class Schedule:
         return True
 
     def calc_fitness(self, ideal_break=8, ideal_overtime_break=2, overtime_idx=24):
-        slots_matrix = np.stack(list(self.slots.values()), axis=0)
+
+        for time in self.slots_matrix:
+            if not (self._is_valid_times(time)):
+                return 100000
 
         # Soft Constraint 1: Number of drivers that goes on breaks together are preferabably the ideal value
-        break_count_col = np.sum((slots_matrix == 0), axis=0)
+        break_count_col = np.sum((self.slots_matrix == 0), axis=0)
         difference = np.abs(break_count_col - ideal_break)
 
         ignore_idx = [0, 1]
@@ -143,7 +152,9 @@ class Schedule:
         fitness1 = np.sum(penalty_score)
 
         # Soft Constraint 2: One hour break during overtime and 2 hour  is preferable
-        overtime_break_count_row = np.sum((slots_matrix[:, overtime_idx:] == 0), axis=1)
+        overtime_break_count_row = np.sum(
+            (self.slots_matrix[:, overtime_idx:] == 0), axis=1
+        )
         difference = np.abs(overtime_break_count_row - ideal_overtime_break)
         difference = [10 if val >= 1 else 0 for val in difference]
 
@@ -154,56 +165,144 @@ class Schedule:
         return fitness_score
 
     def random_mutate(self, mutation_rate=0.1):
-        for driver, times in self.slots.items():
-            for i in range(times.shape[0]):
-                rand = random.random()
-                if rand > mutation_rate:
-                    times[i] = 1 - times[i]
+        rand = np.random.rand(self.slots_matrix.shape[0], self.slots_matrix.shape[1])
+        change_mask = rand < mutation_rate
+        self.slots_matrix[change_mask] = 1 - self.slots_matrix[change_mask]
 
-    def random_crossover(self, other_schedule, size=5):
+    def random_crossover(self, other_schedule, points=3):
 
-        data1 = {}
-        data2 = {}
+        # Generate random crossover points
+        crossover_points = np.random.randint(
+            0, self.slots_matrix.shape[1], size=(self.slots_matrix.shape[0], points)
+        )
 
-        for driver, times1 in self.slots.items():
-            times2 = other_schedule[driver]
+        # Sort the crossover points
+        crossover_points.sort(axis=-1)
 
-            assert times1.shape == times2.shape
-            random_array = np.random.choice(
-                np.arange(0, times1.shape[0]), size, replace=False
-            )
-            A_new, B_new = self._multi_point_crossover(times1, times2, random_array)
+        # Add column 0 and the last column
+        crossover_points = np.concatenate(
+            (
+                np.zeros((self.slots_matrix.shape[0], 1), dtype=int),
+                crossover_points,
+                np.array(
+                    [self.slots_matrix.shape[1] - 1] * self.slots_matrix.shape[0]
+                ).reshape(self.slots_matrix.shape[0], 1),
+            ),
+            axis=1,
+        )
 
-            data1[driver] = A_new
-            data2[driver] = B_new
+        # Create two empty arrays to store the child arrays
+        child1 = np.empty_like(self.slots_matrix)
+        child2 = np.empty_like(self.slots_matrix)
+
+        # Iterate over the rows of the array
+        for i in range(self.slots_matrix.shape[0]):
+            for j in range(points + 1):
+                if j % 2 == 0:
+                    child1[
+                        i, crossover_points[i, j] : crossover_points[i, j + 1]
+                    ] = self.slots_matrix[
+                        i, crossover_points[i, j] : crossover_points[i, j + 1]
+                    ]
+                    child2[
+                        i, crossover_points[i, j] : crossover_points[i, j + 1]
+                    ] = other_schedule.slots_matrix[
+                        i, crossover_points[i, j] : crossover_points[i, j + 1]
+                    ]
+                else:
+                    child1[
+                        i, crossover_points[i, j] : crossover_points[i, j + 1]
+                    ] = other_schedule.slots_matrix[
+                        i, crossover_points[i, j] : crossover_points[i, j + 1]
+                    ]
+                    child2[
+                        i, crossover_points[i, j] : crossover_points[i, j + 1]
+                    ] = self.slots_matrix[
+                        i, crossover_points[i, j] : crossover_points[i, j + 1]
+                    ]
 
         new_schedule1, new_schedule2 = Schedule(), Schedule()
-        new_schedule1.slots.update(data1)
-        new_schedule2.slots.update(data2)
+        new_schedule1.slots_matrix = child1
+        new_schedule2.slots_matrix = child2
 
         return new_schedule1, new_schedule2
 
-    def _single_point_crossover(self, A, B, x):
-        A_new = np.append(A[:x], B[x:])
-        B_new = np.append(B[:x], A[x:])
 
-        return A_new, B_new
+class GeneticAlgorithm:
+    def __init__(self):
+        self.final_generation = 1
 
-    def _multi_point_crossover(self, A, B, X):
-        for i in X:
-            A, B = self._single_point_crossover(A, B, i)
-        return A, B
+        self.fitness_vals = []
+        self.population_size = 10
+        self.populations: list[Schedule] = []
+
+    def run(self):
+        self._generate_population(self.population_size)
+
+        for i in range(self.final_generation + 1):
+
+            # Sort by fitness values
+            self.populations.sort(key=lambda x: x.calc_fitness(), reverse=False)
+            self.fitness_vals.append(self.populations[0].calc_fitness())
+            worst_chromosome = self.populations.pop()
+
+            self._select_chromosome()
+            self._crossover_chromosome(crossover_point=3)
+            self._mutate_chromosome(mutation_rate=0.1)
+
+            # Check if children is better than the worst chromosome
+            while (
+                self.mating_pool[0].calc_fitness() >= worst_chromosome.calc_fitness()
+                and self.mating_pool[1].calc_fitness()
+                >= worst_chromosome.calc_fitness()
+            ):
+                # Mutate until better chromosome is achieved
+                self._select_chromosome()
+                self._crossover_chromosome(crossover_point=3)
+                self._mutate_chromosome(mutation_rate=0.5)
+
+            feasible_chromosome = sorted(
+                [self.mating_pool[0], self.mating_pool[1], worst_chromosome],
+                key=lambda x: x.calc_fitness(),
+            )[0]
+            self.populations.append(feasible_chromosome)
+
+            if ((i + 1) % 10) == 0:
+                print(f"Best Schedule in Generation {i+1}\n")
+                self.populations[0].print_data()
+                print()
+
+    def _generate_population(self, population_size=10):
+        # Initialize population
+        for _ in range(population_size):
+            s = Schedule()
+            s.generate_random_schedule()
+            self.populations.append(s)
+
+    def _select_chromosome(self):
+        # Select 2 then the best one is selected, the selected are removed so that it will not get selected the second time
+        self.mating_pool: list[Schedule] = []
+        selected = sorted(
+            random.sample(self.populations, 4), key=lambda x: x.calc_fitness()
+        )
+        self.mating_pool.append(selected[0])
+        self.mating_pool.append(selected[1])
+
+    def _crossover_chromosome(self, crossover_point=3):
+        # Crossover of the parents
+        child1, child2 = self.mating_pool[0].random_crossover(
+            self.mating_pool[1], crossover_point
+        )
+
+        self.mating_pool[0] = child1
+        self.mating_pool[1] = child2
+
+    def _mutate_chromosome(self, mutation_rate=0.1):
+        # Mutation of the chromosome
+        self.mating_pool[0].random_mutate(mutation_rate=mutation_rate)
+        self.mating_pool[1].random_mutate(mutation_rate=mutation_rate)
 
 
 if __name__ == "__main__":
-    s1 = Schedule()
-
-    s1.generate_random_schedule()
-    print("Before mutation:\n")
-    s1.print_data()
-
-    print(s1.calc_fitness())
-
-    # print("After mutation:\n")
-    # s1.random_mutate(0.5)
-    # s1.print_data()
+    gen = GeneticAlgorithm()
+    GeneticAlgorithm().run()
