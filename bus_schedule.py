@@ -30,7 +30,7 @@ class Schedule:
         self.date = datetime.now()
 
     def create_data(self):
-        TOTAL_DRIVERS = 23
+        TOTAL_DRIVERS = 10
         DRIVERS = [f"D{i:02}" for i in range(1, TOTAL_DRIVERS + 1)]
 
         TIMES = [
@@ -230,10 +230,10 @@ class Schedule:
 
 class GeneticAlgorithm:
     def __init__(self):
-        self.final_generation = 1
+        self.final_generation = 5
 
         self.fitness_vals = []
-        self.population_size = 10
+        self.population_size = 50
         self.populations: list[Schedule] = []
 
     def run(self):
@@ -248,18 +248,22 @@ class GeneticAlgorithm:
 
             self._select_chromosome()
             self._crossover_chromosome(crossover_point=3)
-            self._mutate_chromosome(mutation_rate=0.1)
+            self._mutate_chromosome(mutation_rate=0.3)
 
             # Check if children is better than the worst chromosome
+            attempts = 0
             while (
                 self.mating_pool[0].calc_fitness() >= worst_chromosome.calc_fitness()
                 and self.mating_pool[1].calc_fitness()
                 >= worst_chromosome.calc_fitness()
+                and attempts <= 100
             ):
                 # Mutate until better chromosome is achieved
                 self._select_chromosome()
                 self._crossover_chromosome(crossover_point=3)
-                self._mutate_chromosome(mutation_rate=0.5)
+                self._mutate_chromosome(mutation_rate=0.1)
+
+                attempts += 1
 
             feasible_chromosome = sorted(
                 [self.mating_pool[0], self.mating_pool[1], worst_chromosome],
@@ -267,7 +271,7 @@ class GeneticAlgorithm:
             )[0]
             self.populations.append(feasible_chromosome)
 
-            if ((i + 1) % 10) == 0:
+            if ((i + 1) % 1) == 0:
                 print(f"Best Schedule in Generation {i+1}\n")
                 self.populations[0].print_data()
                 print()
