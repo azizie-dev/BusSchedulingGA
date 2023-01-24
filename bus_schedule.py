@@ -69,8 +69,12 @@ class Schedule:
 
     def _generate_raw_times(self):
         new_times = np.ones(len(self.timeslots), dtype=int)
+
+        # Generate a random number of indices to change to 0
+        num_changed = np.random.randint(1, new_times.size - 2)
+
         random_indices = np.random.choice(
-            np.arange(2, len(self.timeslots) - 1, 1), 6, replace=False
+            np.arange(2, len(self.timeslots) - 1, 1), num_changed, replace=False
         )
         # random_indices = np.concatenate((random_indices, random_indices + 1), axis=0)
         new_times[random_indices] = 0
@@ -239,7 +243,7 @@ class Schedule:
 
 class GeneticAlgorithm:
     def __init__(self):
-        self.final_generation = 10
+        self.final_generation = 1000
 
         self.fitness_vals = []
         self.population_size = 10
@@ -248,6 +252,9 @@ class GeneticAlgorithm:
         self.crossover_rate = 0.8
         self.mutation_rate = 0.5
 
+        self.mating_pool: list[Schedule] = []
+        self.stop = False
+
     def run(self):
         self._generate_population(self.population_size)
 
@@ -255,9 +262,10 @@ class GeneticAlgorithm:
 
             # Sort by fitness values
             self.populations.sort(key=lambda x: x.calc_fitness(), reverse=False)
-            if ((i + 1) % 5) == 0:
-                print(f"Best Schedule in Generation {i+1}\n")
-                self.populations[0].print_data()
+            if ((i + 1) % 10) == 0:
+                print(f"Best Schedule in Generation {i+1}:")
+                # self.populations[0].print_data()
+                print(self.populations[0].calc_fitness())
                 print()
 
             self.fitness_vals.append(self.populations[0].calc_fitness())
@@ -280,15 +288,28 @@ class GeneticAlgorithm:
                     break
 
                 attempts += 1
+                if (attempts % 500) == 0:
+                    print(
+                        [
+                            self.mating_pool[0].calc_fitness(),
+                            self.mating_pool[1].calc_fitness(),
+                            worst_chromosome_fitness,
+                        ],
+                    )
 
-                # if attempts > 10000:
-                #     break
-
+                if attempts > 1000:
+                    self.stop = True
+                    break
+            # print("Success")
             feasible_chromosome = sorted(
                 [self.mating_pool[0], self.mating_pool[1], worst_chromosome],
                 key=lambda x: x.calc_fitness(),
             )[0]
             self.populations.append(feasible_chromosome)
+
+        print(self.fitness_vals)
+        print(f"Best Schedule in Generation {self.final_generation}\n")
+        self.populations[0].print_data()
 
     def _generate_population(self, population_size=10):
         # Initialize population
@@ -298,9 +319,10 @@ class GeneticAlgorithm:
             self.populations.append(s)
 
     def _select_chromosome(self):
-        # Select 2 then the best one is selected, the selected are removed so that it will not get selected the second time
-        self.mating_pool: list[Schedule] = []
+        if self.mating_pool:
+            self.mating_pool.clear()
 
+        # Select 2 then the best one is selected, the selected are removed so that it will not get selected the second time
         fitness_values = [x.calc_fitness() for x in self.populations]
         min_fitness = min(fitness_values)
         fitness_values = [min_fitness - i for i in fitness_values]
