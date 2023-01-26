@@ -4,7 +4,8 @@ __pycache__/
 *$py.class
 
 main.ipynb
-
+read_result.ipynb
+results/
 
 # C extensions
 *.so

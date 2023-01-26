@@ -4,12 +4,12 @@ import random
 import numpy as np
 import pprint
 from itertools import groupby
+import pickle
 
 
 @dataclass(frozen=True)
 class BusDriver:
     id: str
-    name: str = ""
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,8 @@ class Schedule:
         self.data_from_matrix()
         pprint.pprint(self.slots)
         print(f"\nFitness: {self.calc_fitness()}\n")
+
+        return f"{self.slots}"
 
     def data_from_matrix(self):
         new_dict = {
@@ -104,8 +106,8 @@ class Schedule:
             len(list(group)) for key, group in groupby(arr) if key == 1
         ]
 
-        max_consecutive_work = max(consecutive_count)
-        min_consecutive_work = min(consecutive_count)
+        max_consecutive_work = max(consecutive_count) if consecutive_count else 0
+        min_consecutive_work = min(consecutive_count) if consecutive_count else 0
 
         # Hard Constraint 3: Every work should be at least 1hr and does not exceed 4hr
         if max_consecutive_work > 10:
@@ -118,20 +120,24 @@ class Schedule:
         # if (arr[0] == 0) or (arr[1] == 0):
         #     penalty_score += 1000
 
-        max_consecutive_break = min(
-            [len(list(group)) for key, group in groupby(arr) if key == 0]
+        consecutive_break_count = [
+            len(list(group)) for key, group in groupby(arr) if key == 0
+        ]
+        max_consecutive_break = (
+            min(consecutive_break_count) if consecutive_break_count else 0
         )
+
         break_count = np.sum(arr == 0)
 
         if (break_count) > 6:
-            penalty_score += np.abs(break_count - 6) * 20
+            penalty_score += np.abs(break_count - 6) * 50
 
         if max_consecutive_break > 2:
-            penalty_score += np.abs(max_consecutive_break - 2) * 10
+            penalty_score += np.abs(max_consecutive_break - 2) * 50
 
         return penalty_score
 
-    def calc_fitness(self, ideal_break=8, ideal_overtime_break=2, overtime_idx=24):
+    def calc_fitness(self, ideal_break=5, ideal_overtime_break=1, overtime_idx=24):
 
         fitness0 = np.sum([self._calc_valid_times(time) for time in self.slots_matrix])
 
@@ -246,11 +252,11 @@ class GeneticAlgorithm:
         self.final_generation = 1000
 
         self.fitness_vals = []
-        self.population_size = 10
+        self.population_size = 50
         self.populations: list[Schedule] = []
 
-        self.crossover_rate = 0.8
-        self.mutation_rate = 0.5
+        self.crossover_rate = 0.5
+        self.mutation_rate = 0.1
 
         self.mating_pool: list[Schedule] = []
         self.stop = False
@@ -262,7 +268,7 @@ class GeneticAlgorithm:
 
             # Sort by fitness values
             self.populations.sort(key=lambda x: x.calc_fitness(), reverse=False)
-            if ((i + 1) % 10) == 0:
+            if ((i + 1) % 100) == 0:
                 print(f"Best Schedule in Generation {i+1}:")
                 # self.populations[0].print_data()
                 print(self.populations[0].calc_fitness())
@@ -297,8 +303,7 @@ class GeneticAlgorithm:
                         ],
                     )
 
-                if attempts > 1000:
-                    self.stop = True
+                if attempts > 10:
                     break
             # print("Success")
             feasible_chromosome = sorted(
@@ -309,7 +314,20 @@ class GeneticAlgorithm:
 
         print(self.fitness_vals)
         print(f"Best Schedule in Generation {self.final_generation}\n")
-        self.populations[0].print_data()
+        self.save_file(5)
+
+    def save_file(self, idx):
+        data = {
+            "generations": self.final_generation,
+            "crossover_rate": self.crossover_rate,
+            "mutation_rate": self.mutation_rate,
+            "size": self.population_size,
+            "results": self.fitness_vals,
+            "table": self.populations[0].print_data(),
+        }
+
+        with open(f"results/cr-{idx:02}.pickle", "wb") as f:
+            pickle.dump(data, f)
 
     def _generate_population(self, population_size=10):
         # Initialize population
